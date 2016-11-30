@@ -7,7 +7,7 @@
 #   http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
+
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
@@ -43,6 +43,17 @@ gpu_pcie_bandwidth:
           image: /ubuntu-os-cloud/ubuntu-1604-xenial-v20161115
           machine_type: n1-standard-4-k80x1
           zone: us-east1-d
+        AWS:
+          image: ami-a9d276c9
+          machine_type: p2.xlarge
+          zone: us-west-2b
+      disk_spec:
+        GCP:
+          disk_type: pd-standard
+          disk_size: 15
+        AWS:
+          disk_type: standard
+          disk_size: 15
 """
 BENCHMARK_METRICS = ['Host to device bandwidth',
                      'Device to host bandwidth',
