@@ -14,6 +14,7 @@
 
 """Tests for perfkitbenchmarker.providers.aws."""
 
+import ipdb
 import json
 import os.path
 import unittest
@@ -153,3 +154,37 @@ class AwsGetRegionFromZoneTestCase(unittest.TestCase):
 
   def testRegion(self):
     self.assertEqual(util.GetRegionFromZone('eu-central-1'), 'eu-central-1')
+
+class AwsGetBlockDeviceMapTestCase(unittest.TestCase):
+  
+  def testInvalidMachineType(self):
+    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap('invalid'), None)
+
+  def testValidMachineTypeWithNoRootVolumeSize(self):
+    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap('c1.medium'), '[{"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]')
+
+  def testValidMachineTypeWithSpecifiedRootVolumeSize(self):
+    desired_root_volume_size_gb = 35
+    machine_type = 'c1.medium'
+    expected = '[{"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]'   
+    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap(machine_type, desired_root_volume_size_gb), 'blah')
+
+class AwsGetRootBlockDeviceSpecFromImageTestCase(unittest.TestCase):
+
+  def setUp(self):
+    p = mock.patch(util.__name__ + '.IssueRetryableCommand')
+    p.start()
+    self.addCleanup(p.stop)
+
+    path = os.path.join(os.path.dirname(__file__),
+                        'data', 'describe_image_output.txt')
+    with open(path) as fp:
+      self.dummyStdout = fp.read()
+    
+  def testOk(self):
+    util.IssueRetryableCommand.side_effect = [(self.dummyStdout, None)]
+    image_id = 'ami-a9d276c9'
+    expected = {'DeviceName': '/dev/sda1', 'Ebs': {'SnapshotId': 'snap-826344d5', 'DeleteOnTermination': True, 'VolumeType': 'gp2', 'VolumeSize': 8, 'Encrypted': False}}
+    actual = aws_virtual_machine.GetRootBlockDeviceSpecFromImage(image_id)
+    self.assertEqual(actual, expected)
+                     

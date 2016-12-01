@@ -18,6 +18,7 @@ All VM specifics are self-contained and the class provides methods to
 operate on the VM: boot, shutdown, etc.
 """
 
+import ipdb
 import base64
 import collections
 import json
@@ -70,8 +71,30 @@ HOST_EXISTS_STATES = frozenset(
 HOST_RELEASED_STATES = frozenset(['released', 'released-permanent-failure'])
 KNOWN_HOST_STATES = HOST_EXISTS_STATES | HOST_RELEASED_STATES
 
+def GetRootBlockDeviceSpecFromImage(image_id):
+  if image_id is None:
+    return None
 
-def GetBlockDeviceMap(machine_type):
+  command = util.AWS_PREFIX + [
+      'ec2',
+      'describe-images',
+      '--image-ids %s' % image_id,
+      '--query', 'Images[]']
+  stdout, _ = util.IssueRetryableCommand(command)
+  if not stdout:
+    return None
+  
+  images = json.loads(stdout)
+  assert images
+  assert len(images) == 1, 'Expected to receive only one image description for %s' % image_id
+  image_spec = images[0]
+  root_device_name = image_spec['RootDeviceName']
+  block_device_mappings = image_spec['BlockDeviceMappings']
+  root_block_device_dict = next((x for x in block_device_mappings if 
+                                 x['DeviceName'] == root_device_name), None)
+  return root_block_device_dict
+
+def GetBlockDeviceMap(machine_type, root_volume_size=None, image=None):
   """Returns the block device map to expose all devices for a given machine.
 
   Args:
@@ -82,6 +105,24 @@ def GetBlockDeviceMap(machine_type):
     with the AWS CLI, or if the machine type has no local disks, it will
     return None.
   """
+#  mappings = [{'DeviceName': '/dev/xvda1',
+#               'Ebs': {'SnapshotId': 'snap-826344d5',
+#                       'VolumeSize': 13}}]
+#  return json.dumps(mappings)
+
+  #describe_cmd = util.AWS_PREFIX + [
+  #      '--region=%s' % region,
+  #      'ec2',
+  #      'describe-images',
+  #      '--image-ids %s' % image_id,
+  #      '--query', 'Images[]']
+  #stdout, _ = util.IssueRetryableCommand(describe_cmd)
+  #pdb.set_trace()
+  #if not stdout:
+  #  return None
+
+  #images = json.loads(stdout)
+
   if machine_type in NUM_LOCAL_VOLUMES:
     mappings = [{'VirtualName': 'ephemeral%s' % i,
                  'DeviceName': '/dev/xvd%s' % chr(ord(DRIVE_START_LETTER) + i)}
@@ -203,7 +244,8 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
 
   CLOUD = providers.AWS
   IMAGE_NAME_FILTER = None
-  DEFAULT_ROOT_DISK_TYPE = 'gp2'
+  #DEFAULT_ROOT_DISK_TYPE = 'gp2'
+  DEFAULT_ROOT_DISK_SIZE_GB = 10
 
   _lock = threading.Lock()
   imported_keyfile_set = set()
@@ -370,8 +412,13 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
     elif IsPlacementGroupCompatible(self.machine_type):
       placement.append('GroupName=%s' % self.network.placement_group.name)
     placement = ','.join(placement)
-    block_device_map = GetBlockDeviceMap(self.machine_type)
-
+    block_device_map = GetBlockDeviceMap(self.machine_type, DEFAULT_ROOT_DISK_SIZE_GB or None)
+    # So, we want a larger root volume?
+    # Check flags, and see if user specified this.
+    # If so, get the default root volume name like so:
+    # aws ec2 describe-images --image-ids image_id --query Images[].RootDeviceName
+    # Then use that device name to create a block_device_map with the correct
+    # root_device_size as specified by the flag, boot_disk_size
     create_cmd = util.AWS_PREFIX + [
         'ec2',
         'run-instances',
