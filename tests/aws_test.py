@@ -157,19 +157,33 @@ class AwsGetRegionFromZoneTestCase(unittest.TestCase):
 
 class AwsGetBlockDeviceMapTestCase(unittest.TestCase):
   
+  def setUp(self):
+    p = mock.patch(util.__name__ + '.IssueRetryableCommand')
+    p.start()
+    self.addCleanup(p.stop)
+
+    path = os.path.join(os.path.dirname(__file__),
+                        'data', 'describe_image_output.txt')
+    with open(path) as fp:
+      self.describeImageOutput = fp.read()
+ 
   def testInvalidMachineType(self):
     self.assertEqual(aws_virtual_machine.GetBlockDeviceMap('invalid'), None)
 
   def testValidMachineTypeWithNoRootVolumeSize(self):
-    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap('c1.medium'), '[{"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]')
+    expected = '[{"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]'
+    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap('c1.medium'), expected)
 
   def testValidMachineTypeWithSpecifiedRootVolumeSize(self):
+    util.IssueRetryableCommand.side_effect = [(self.describeImageOutput, None)]
     desired_root_volume_size_gb = 35
     machine_type = 'c1.medium'
-    expected = '[{"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]'   
-    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap(machine_type, desired_root_volume_size_gb), 'blah')
+    image_id = 'ami-a9d276c9'
+    expected = '[{"DeviceName": "/dev/sda1", "Ebs": {"SnapshotId": "snap-826344d5", "DeleteOnTermination": true, "VolumeType": "gp2", "VolumeSize": 35, "Encrypted": false}}, {"DeviceName": "/dev/xvdb", "VirtualName": "ephemeral0"}]'   
+    self.assertEqual(aws_virtual_machine.GetBlockDeviceMap(
+        machine_type, desired_root_volume_size_gb, image_id), expected)
 
-class AwsGetRootBlockDeviceSpecFromImageTestCase(unittest.TestCase):
+class AwsGetRootBlockDeviceSpecForImageTestCase(unittest.TestCase):
 
   def setUp(self):
     p = mock.patch(util.__name__ + '.IssueRetryableCommand')
@@ -179,12 +193,12 @@ class AwsGetRootBlockDeviceSpecFromImageTestCase(unittest.TestCase):
     path = os.path.join(os.path.dirname(__file__),
                         'data', 'describe_image_output.txt')
     with open(path) as fp:
-      self.dummyStdout = fp.read()
+      self.describeImageOutput = fp.read()
     
   def testOk(self):
-    util.IssueRetryableCommand.side_effect = [(self.dummyStdout, None)]
+    util.IssueRetryableCommand.side_effect = [(self.describeImageOutput, None)]
     image_id = 'ami-a9d276c9'
     expected = {'DeviceName': '/dev/sda1', 'Ebs': {'SnapshotId': 'snap-826344d5', 'DeleteOnTermination': True, 'VolumeType': 'gp2', 'VolumeSize': 8, 'Encrypted': False}}
-    actual = aws_virtual_machine.GetRootBlockDeviceSpecFromImage(image_id)
+    actual = aws_virtual_machine.GetRootBlockDeviceSpecForImage(image_id)
     self.assertEqual(actual, expected)
                      

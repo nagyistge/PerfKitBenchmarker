@@ -1,4 +1,4 @@
-# Copyright 2014 PerfKitBenchmarker Authors. All rights reserved.
+# Copyright 2016 PerfKitBenchmarker Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,19 +71,22 @@ HOST_EXISTS_STATES = frozenset(
 HOST_RELEASED_STATES = frozenset(['released', 'released-permanent-failure'])
 KNOWN_HOST_STATES = HOST_EXISTS_STATES | HOST_RELEASED_STATES
 
-def GetRootBlockDeviceSpecFromImage(image_id):
-  if image_id is None:
-    return None
+def GetRootBlockDeviceSpecForImage(image_id):
+  """ Queries the CLI and returns the root block device specification as a dict.
 
+  Args:
+    image_id: The EC2 image id to query
+
+  Returns: 
+    The root block device specification as returned by the AWS cli, as a Python dict.
+    If the image is not found, or if the response is malformed, an exception will be raised.
+  """
   command = util.AWS_PREFIX + [
       'ec2',
       'describe-images',
       '--image-ids %s' % image_id,
       '--query', 'Images[]']
   stdout, _ = util.IssueRetryableCommand(command)
-  if not stdout:
-    return None
-  
   images = json.loads(stdout)
   assert images
   assert len(images) == 1, 'Expected to receive only one image description for %s' % image_id
@@ -91,45 +94,42 @@ def GetRootBlockDeviceSpecFromImage(image_id):
   root_device_name = image_spec['RootDeviceName']
   block_device_mappings = image_spec['BlockDeviceMappings']
   root_block_device_dict = next((x for x in block_device_mappings if 
-                                 x['DeviceName'] == root_device_name), None)
+                                 x['DeviceName'] == root_device_name))
   return root_block_device_dict
 
-def GetBlockDeviceMap(machine_type, root_volume_size=None, image=None):
+
+def GetBlockDeviceMap(machine_type, root_volume_size_gb=None, image_id=None):
   """Returns the block device map to expose all devices for a given machine.
 
   Args:
     machine_type: The machine type to create a block device map for.
+    root_volume_size: The desired size of the root volume, in GiB,
+      or None to the default provided by AWS
+    image: The image id (AMI) to use in order to lookup the default root device specs.
+      This is only required if root_volume_size is provided.
 
   Returns:
     The json representation of the block device map for a machine compatible
     with the AWS CLI, or if the machine type has no local disks, it will
-    return None.
+    return None. If root_volume_size_gb and image_id are provided, the block device 
+    map will include the specification for the root volume.
   """
-#  mappings = [{'DeviceName': '/dev/xvda1',
-#               'Ebs': {'SnapshotId': 'snap-826344d5',
-#                       'VolumeSize': 13}}]
-#  return json.dumps(mappings)
-
-  #describe_cmd = util.AWS_PREFIX + [
-  #      '--region=%s' % region,
-  #      'ec2',
-  #      'describe-images',
-  #      '--image-ids %s' % image_id,
-  #      '--query', 'Images[]']
-  #stdout, _ = util.IssueRetryableCommand(describe_cmd)
-  #pdb.set_trace()
-  #if not stdout:
-  #  return None
-
-  #images = json.loads(stdout)
+  mappings = []
+  if root_volume_size_gb is not None:
+    if image_id is None:
+      raise ValueError("image_id must be provided if root_volume_size_gb is specified")
+    root_block_device = GetRootBlockDeviceSpecForImage(image_id)
+    root_block_device['Ebs']['VolumeSize'] = root_volume_size_gb
+    mappings.append(root_block_device)
+    
 
   if machine_type in NUM_LOCAL_VOLUMES:
-    mappings = [{'VirtualName': 'ephemeral%s' % i,
-                 'DeviceName': '/dev/xvd%s' % chr(ord(DRIVE_START_LETTER) + i)}
-                for i in xrange(NUM_LOCAL_VOLUMES[machine_type])]
+    for i in xrange(NUM_LOCAL_VOLUMES[machine_type]):
+      mappings.append({'VirtualName': 'ephemeral%s' % i,
+                     'DeviceName': '/dev/xvd%s' % chr(ord(DRIVE_START_LETTER) + i)})
+  if len(mappings):
     return json.dumps(mappings)
-  else:
-    return None
+  return None
 
 
 def IsPlacementGroupCompatible(machine_type):
