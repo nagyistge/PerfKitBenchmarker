@@ -84,7 +84,7 @@ def GetRootBlockDeviceSpecForImage(image_id):
   command = util.AWS_PREFIX + [
       'ec2',
       'describe-images',
-      '--image-ids %s' % image_id,
+      '--image-ids=%s' % image_id,
       '--query', 'Images[]']
   stdout, _ = util.IssueRetryableCommand(command)
   images = json.loads(stdout)
@@ -120,6 +120,7 @@ def GetBlockDeviceMap(machine_type, root_volume_size_gb=None, image_id=None):
       raise ValueError("image_id must be provided if root_volume_size_gb is specified")
     root_block_device = GetRootBlockDeviceSpecForImage(image_id)
     root_block_device['Ebs']['VolumeSize'] = root_volume_size_gb
+    root_block_device['Ebs'].pop('Encrypted') # This key must be removed or the CLI will complain
     mappings.append(root_block_device)
     
 
@@ -222,6 +223,8 @@ class AwsVmSpec(virtual_machine.BaseVmSpec):
     super(AwsVmSpec, cls)._ApplyFlags(config_values, flag_values)
     if flag_values['aws_dedicated_hosts'].present:
       config_values['use_dedicated_host'] = flag_values.aws_dedicated_hosts
+    if flag_values['aws_boot_disk_size'].present:
+      config_values['boot_disk_size'] = flag_values.aws_boot_disk_size
 
   @classmethod
   def _GetOptionDecoderConstructions(cls):
@@ -235,7 +238,9 @@ class AwsVmSpec(virtual_machine.BaseVmSpec):
     result = super(AwsVmSpec, cls)._GetOptionDecoderConstructions()
     result.update({
         'use_dedicated_host': (option_decoders.BooleanDecoder,
-                               {'default': False})})
+                               {'default': False}),
+        'boot_disk_size': (option_decoders.IntDecoder, {'default': None})})
+
     return result
 
 
@@ -244,8 +249,7 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
 
   CLOUD = providers.AWS
   IMAGE_NAME_FILTER = None
-  #DEFAULT_ROOT_DISK_TYPE = 'gp2'
-  DEFAULT_ROOT_DISK_SIZE_GB = 10
+  DEFAULT_ROOT_DISK_TYPE = 'gp2'
 
   _lock = threading.Lock()
   imported_keyfile_set = set()
@@ -268,6 +272,7 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
     self.network = aws_network.AwsNetwork.GetNetwork(self)
     self.firewall = aws_network.AwsFirewall.GetFirewall()
     self.use_dedicated_host = vm_spec.use_dedicated_host
+    self.boot_disk_size = vm_spec.boot_disk_size
     self.client_token = str(uuid.uuid4())
     self.host = None
     self.id = None
@@ -412,13 +417,7 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
     elif IsPlacementGroupCompatible(self.machine_type):
       placement.append('GroupName=%s' % self.network.placement_group.name)
     placement = ','.join(placement)
-    block_device_map = GetBlockDeviceMap(self.machine_type, DEFAULT_ROOT_DISK_SIZE_GB or None)
-    # So, we want a larger root volume?
-    # Check flags, and see if user specified this.
-    # If so, get the default root volume name like so:
-    # aws ec2 describe-images --image-ids image_id --query Images[].RootDeviceName
-    # Then use that device name to create a block_device_map with the correct
-    # root_device_size as specified by the flag, boot_disk_size
+    block_device_map = GetBlockDeviceMap(self.machine_type, self.boot_disk_size, self.image)
     create_cmd = util.AWS_PREFIX + [
         'ec2',
         'run-instances',

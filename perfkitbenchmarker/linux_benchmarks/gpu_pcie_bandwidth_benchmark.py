@@ -47,6 +47,13 @@ gpu_pcie_bandwidth:
           image: ami-a9d276c9
           machine_type: d2.xlarge
           zone: us-west-2b
+          boot_disk_size: 56
+      disk_spec:
+        AWS:
+          disk_size: 7
+          disk_type: gp2
+        GCP:
+          disk_size: 7
 """
 BENCHMARK_METRICS = ['Host to device bandwidth',
                      'Device to host bandwidth',
